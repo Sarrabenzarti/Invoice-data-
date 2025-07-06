@@ -72,7 +72,7 @@ def split_text_into_chunks_langchain(text: str, chunk_size_tokens: int, chunk_ov
 # tnsch l initialiasation mt3 hunk_size_tokens, chunk_overlap_tokens  w l appel mt3 l fonction hthi
 
 
-
+#les deux modules hethom zydin houma des solutions mch bhin kima awelin 3thmli bdlyhom b split text into chunks 
 
 
 def adjust_text_length(text, max_length):
@@ -613,6 +613,8 @@ import time
 from huggingface_hub import hf_hub_download, HfApi, HfFileSystem
 
 
+# l module hetha juste bch njm nb3thou l hne 
+
 def download_model():
     model_path = "models/llama-3-8b-Instruct.Q4_K_M.gguf"
 
@@ -666,6 +668,8 @@ def download_model():
 if __name__ == '__main__':
     print("🚀 Serveur en cours d'exécution avec Waitress sur le port 8080...")
     serve(app, host="0.0.0.0", port=8080)
+
+    # w hetha zeda l kol juste bch njm nb3thou 
     model_path = download_model()
 
     if model_path:
