@@ -1,0 +1,11 @@
+__pycache__/ 
+*.pyc 
+.ipynb_checkpoints/ 
+venv/ 
+.idea/ 
+data/ 
+models/ 
+*.pdb 
+*.h5 
+*.pkl 
+*.zip 
