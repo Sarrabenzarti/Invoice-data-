@@ -1,0 +1,42 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 99 >>
+stream
+BT
+/F1 12 Tf
+72 180 Td
+(Facture : INV-123) Tj
+0 -20 Td
+(Client : TestClient) Tj
+0 -20 Td
+(Total : 456.78) Tj
+0 -20 Td
+(2026-04-11) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000010 00000 n 
+0000000060 00000 n 
+0000000111 00000 n 
+0000000212 00000 n 
+0000000321 00000 n 
+trailer
+<< /Root 1 0 R /Size 6 >>
+startxref
+393
+%%EOF
