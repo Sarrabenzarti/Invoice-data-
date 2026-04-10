@@ -10,3 +10,14 @@ models/
 *.pkl 
 *.zip 
 "llama-3-8b-Instruct.Q4-K_M.gguf" 
+# Fichiers temporaires
+temp_*.pdf
+temp_input.*
+
+# Modèle LLM (trop lourd pour GitHub)
+models/
+
+# Python
+__pycache__/
+*.pyc
+.env
