@@ -1,51 +1,85 @@
 import requests
-# c est la base de la communication avec l API
-# API Endpoint
-url = "http://localhost:8080/extract"
-# l adresse url (complete) de l API m3neha win script /utilisateur yb3th facture w el prompt
+import json
+import os
+import sys
 
-txt="""
+# Configuration de l'URL du serveur TABIBI
+# Port 5000 par défaut pour Flask
+SERVER_URL = "http://localhost:5000/extract"
 
-You are an expert at extracting structured data from documents.
-Your task is to extract specific invoice details from the text provided below.
-You MUST respond ONLY with a valid JSON object. Do NOT include any other text, explanations, or conversational phrases.
-If a field is not found, its value must be `null`.
+def run_tabibi_analysis(file_path):
+    """
+    Fonction principale pour envoyer une fiche de soins au serveur
+    et récupérer les données structurées.
+    """
+    
+    # 1. Vérification du fichier local
+    if not os.path.exists(file_path):
+        print(f"ERREUR : Le fichier '{file_path}' est introuvable.")
+        return
 
-Invoice Text:
----
-{text}  
----
+    # 2. Définition du Prompt Client (Instruction spécifique pour TABIBI)
+    # On demande explicitement au LLM d'extraire les soins dentaires
+    client_prompt = """
+    Tu es l'assistant IA de TABIBI. Analyse cette fiche de soins dentaires.
+    Extrais les informations suivantes en JSON :
+    - patient_name : Le nom du patient.
+    - date : La date de la visite.
+    - treatments : Une liste d'objets contenant {act, tooth, price}.
+    - total : Le montant total de la fiche.
 
-Return the extracted fields in the following JSON format.
-Strictly adhere to this format, including the markdown code block.
+    Réponds uniquement par un objet JSON valide.
+    """
 
+    print(f"\n--- 🦷 TABIBI AI : Analyse en cours ---")
+    print(f"Fichier : {file_path}")
 
-```json
-{{
-  "vendor_name": null,
-  "invoice_date": null,
-  "total_amount": null,
-  "invoice_number": null,
-  "total_tax_percentage": null,
-  "devise": null,
-  "debit_note": null
-}}
-"""
+    try:
+        # 3. Ouverture et envoi du fichier
+        with open(file_path, "rb") as f:
+            files = {"file": (os.path.basename(file_path), f)}
+            data = {"prpt": client_prompt}
 
+            # On utilise un timeout long (180s) car l'OCR + Llama 3 prend du temps sur PC
+            response = requests.post(SERVER_URL, files=files, data=data, timeout=600)
 
+        # 4. Traitement de la réponse du serveur
+        if response.status_code == 200:
+            result = response.json()
+            
+            print("\n ANALYSE RÉUSSIE")
+            print("="*40)
+            print(f" Patient : {result.get('patient_name', 'Inconnu')}")
+            print(f" Date    : {result.get('date', 'Inconnue')}")
+            print("-"*40)
+            print(f"{'ACTE DENTAIRE':<25} | {'DENT':<5} | {'PRIX':<10}")
+            print("-"*40)
+            
+            for t in result.get("treatments", []):
+                act = t.get("act", "N/A")
+                tooth = t.get("tooth", "-")
+                price = t.get("price", "0")
+                print(f"{str(act):<25} | {str(tooth):<5} | {str(price):<10}")
+            
+            print("-"*40)
+            print(f" TOTAL : {result.get('total', 0.0)} TND/EUR")
+            print("="*40)
 
+        else:
+            print(f"\n ERREUR SERVEUR ({response.status_code})")
+            print(f"Détails : {response.text}")
 
-files = {"file": open("temp_facture3.pdf", "rb")}  # Upload file
-# lzm fl pc eli cht3ml bih tkoun esm l facture temp_facture3.pdf w l serveur bch yjih un dictionaire l cle esmou file :
-data = {"prpt": txt}
+    except requests.exceptions.Timeout:
+        print("\n ERREUR : Le serveur a mis trop de temps à répondre (Timeout).")
+    except requests.exceptions.ConnectionError:
+        print("\n ERREUR : Impossible de se connecter au serveur. Lancez 'app.py' d'abord.")
+    except Exception as e:
+        print(f"\n ERREUR INATTENDUE : {str(e)}")
 
-# Préparer les données textuelles (le prompt) à envoyer au serveur.
-
-response = requests.post(url, files=files, data=data)
-# response bch trj3lk resultat t3 l envoi
-# post() : Indique que c'est une requête HTTP POST m3neha bch tsir modification ll information eli tb3tht mch kima .get() juste t5ou des donnes  kima t3tini page web
-if response.status_code == 200:  # l 200 hki 3ibara 3ala API raja3 reponse mch m3neha llama  a bien extrait la facture
-    print("Extracted Data:", response.json())
-else:
-    print("Error:", response.status_code, response.text)
-
+if __name__ == "__main__":
+    # --- CONFIGURATION DU TEST ---
+    # Remplace par le nom de ton fichier actuel (PDF ou JPG)
+    fichier_a_traiter = "temp_facture3.pdf" 
+    
+    # Lancement de l'analyse
+    run_tabibi_analysis(fichier_a_traiter)

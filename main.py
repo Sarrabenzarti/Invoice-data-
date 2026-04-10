@@ -5,7 +5,7 @@ import json
 import re
 import torch
 from langdetect import detect
-import pdf2Image
+import pdf_image_ocr
 from collections import Counter
 
 from transformers import AutoTokenizer
@@ -19,19 +19,32 @@ from llama_cpp import Llama
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 llm = None # Initialiser llm à None au cas où le chargement échoue
-try:
-    print("INFO: Tentative de chargement du modèle Llama...") # <-- Here
+# try:
+#     print("INFO: Tentative de chargement du modèle Llama...") # <-- Here
 
-    llm = Llama(model_path="models/llama-3-8b-Instruct.Q4_K_M.gguf", tn_cx=8192,n_gpu_layers=-1)
-    print("SUCCESS: Modèle Llama chargé avec succès !") # <-- Here
-    print(f"DEBUG: Taille réelle de la fenêtre de contexte LLM (n_ctx()): {llm.n_ctx()} tokens")
-except Exception as e:
-    print(f"CRITICAL ERROR: Impossible de charger le modèle Llama (fichier GGUF).") # <-- Here
-    print(f"Détails de l'erreur: {e}")
-    exit(1)
+#     llm = Llama(model_path="models/llama-3-8b-Instruct.Q4_K_M.gguf", n_ctx=8192,n_gpu_layers=-1)
+#     print("SUCCESS: Modèle Llama chargé avec succès !") # <-- Here
+#     print(f"DEBUG: Taille réelle de la fenêtre de contexte LLM (n_ctx()): {llm.n_ctx()} tokens")
+# except Exception as e:
+#     print(f"CRITICAL ERROR: Impossible de charger le modèle Llama (fichier GGUF).") # <-- Here
+#     print(f"Détails de l'erreur: {e}")
+#     exit(1)
+
+
+def load_llama_model(path):
+    global llm
+    try:
+        print(f"INFO: Tentative de chargement du modèle depuis {path}...")
+        llm = Llama(model_path=path, n_ctx=8192, n_gpu_layers=-1)
+        print("SUCCESS: Modèle Llama chargé avec succès !")
+    except Exception as e:
+        print(f"CRITICAL ERROR: Impossible de charger le modèle : {e}")
+        exit(1)
+
+
 # l modifaction
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from transformers import AutoTokenizer
 
 # Generate text
@@ -179,9 +192,38 @@ def fix_json_braces(json_str):
         json_str = fixed_str
     return json_str
 
-def extract_invoice_data(full_prompt_for_llm, chunk_text_for_debug):
-    # NOUVELLE LIGNE DE DÉBOGAGE ICI:
-    print(f"DEBUG: Contenu du chunk envoyé au LLM (premiers 500 chars):\n{chunk_text_for_debug[:500]}...")
+
+
+def extract_invoice_data(system_prompt, chunk_text):
+    print(f"DEBUG: Chunk envoyé (500 chars): {chunk_text[:500]}")
+
+    response = llm.create_chat_completion(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"OCR Text:\n---\n{chunk_text}\n---\nExtract the JSON now."}
+        ],
+        temperature=0.0,
+        max_tokens=1024,
+    )
+
+    response_text = response["choices"][0]["message"]["content"].strip()
+    print(f"DEBUG: Réponse LLM: {response_text}")
+
+    match = re.search(r'(\{[\s\S]*\})', response_text, re.DOTALL)
+    if match:
+        json_str = fix_json_braces(match.group(0))
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError as e:
+            print(f"JSON parse error: {e}")
+            return {"error": f"JSON invalide: {e}"}
+
+    print("WARNING: Aucun JSON trouvé.")
+    return {"error": "Aucun JSON trouvé"}
+
+# def extract_invoice_data(full_prompt_for_llm, chunk_text_for_debug):
+#     # NOUVELLE LIGNE DE DÉBOGAGE ICI:
+#     print(f"DEBUG: Contenu du chunk envoyé au LLM (premiers 500 chars):\n{chunk_text_for_debug[:500]}...")
 
     #hthi l basee
     #print(len(text))
@@ -268,37 +310,37 @@ def extract_invoice_data(full_prompt_for_llm, chunk_text_for_debug):
 
 
 
-    response = llm.create_completion(full_prompt_for_llm,
-    temperature=0.0,
-    #For strict data extraction, factual questions, or consistent, machine-readable output (like JSON), keep temperature low (0.1 to 0.3).
-    #For creative tasks, brainstorming, diverse responses, or more conversational interactions, set temperature higher (0.7 to 1.0 or even above, depending on the model's range)
-    max_tokens=4096,
-    stop=["```", "\nOutput:", "\n\nOutput:", "\n```json"]
-    )
+    # response = llm.create_chat_completion(full_prompt_for_llm,
+    # temperature=0.0,
+    # #For strict data extraction, factual questions, or consistent, machine-readable output (like JSON), keep temperature low (0.1 to 0.3).
+    # #For creative tasks, brainstorming, diverse responses, or more conversational interactions, set temperature higher (0.7 to 1.0 or even above, depending on the model's range)
+    # max_tokens=4096,
+    # stop=["```", "\nOutput:", "\n\nOutput:", "\n```json"]
+    # )
 
 
-    # etape 3: recevoir la reponse de llama
+    # # etape 3: recevoir la reponse de llama
 
-    print(f"DEBUG: Réponse brute du LLM : {response}")
-    response_text = response["choices"][0]["text"].strip()
-    print(f"DEBUG: Texte brut de la réponse (strip) : {response_text}")  # Affichez ceci pour vérifier !
+    # print(f"DEBUG: Réponse brute du LLM : {response}")
+    # response_text = response["choices"][0]["text"].strip()
+    # print(f"DEBUG: Texte brut de la réponse (strip) : {response_text}")  # Affichez ceci pour vérifier !
 
-    match = re.search(r'(\{[\s\S]*\})', response_text, re.DOTALL)
-    parsed_data = None
-    if match:
-        json_str = match.group(0)  # group(0) récupère toute la correspondance
-        json_str = fix_json_braces(json_str)  # Tentative de réparer les accolades
-        try:
-            parsed_data = json.loads(json_str)
-            print(f"DEBUG: JSON parsé avec succès : {parsed_data}")
-        except json.JSONDecodeError as e:
-            print(f"Erreur de parsing JSON même après réparation : {e}")
-            return {"error": f"Erreur de format JSON: {e}"}
-    else:
-        print("WARNING: Aucun bloc JSON trouvé par regex dans la réponse du LLM.")
-        return {"error": "Aucun bloc JSON trouvé"}
+    # match = re.search(r'(\{[\s\S]*\})', response_text, re.DOTALL)
+    # parsed_data = None
+    # if match:
+    #     json_str = match.group(0)  # group(0) récupère toute la correspondance
+    #     json_str = fix_json_braces(json_str)  # Tentative de réparer les accolades
+    #     try:
+    #         parsed_data = json.loads(json_str)
+    #         print(f"DEBUG: JSON parsé avec succès : {parsed_data}")
+    #     except json.JSONDecodeError as e:
+    #         print(f"Erreur de parsing JSON même après réparation : {e}")
+    #         return {"error": f"Erreur de format JSON: {e}"}
+    # else:
+    #     print("WARNING: Aucun bloc JSON trouvé par regex dans la réponse du LLM.")
+    #     return {"error": "Aucun bloc JSON trouvé"}
 
-    return parsed_data
+    # return parsed_data
     #if match:
             #json_str = match.group(1)
             #json_str = fix_json_braces(json_str)  # <--- Appel ici
@@ -363,36 +405,95 @@ def validate_invoice_data(data):
 
 # extract hthi mwjouda fl backend ama hiya awl w7da tt3ml m3a l API (serveur t3 restau ) ttsma endpoint (point dentree de l api )
 def extract():
-    print("\nINFO: Requête /extract reçue.")
+    print("\nINFO: Requête reçue sur /extract")
 
-    #1: recevoir un pdf
-    #print(request.files)
     if 'file' not in request.files:
-        print("ERROR: Aucun fichier fourni dans la requête.")
         return jsonify({"error": "Aucun fichier fourni"}), 400
 
     file = request.files['file']
-    prpt_from_client_str=request.form.get("prpt","")
+    filename = file.filename
+    extension = os.path.splitext(filename)[1].lower()
+    
+    # Sauvegarde temporaire propre
+    temp_path = f"temp_input{extension}"
+    file.save(temp_path)
 
-
-    #2: save un pdf
-    pdf_path = "temp_facture.pdf"
-    file.save(pdf_path)
-
-    #3.extract text mn pdf
-    #text = extract_text_from_pdf(pdf_path)
-
+    # 1. OCR intelligent (PDF ou Image)
+    # try:
+    #     if extension == '.pdf':
+            
+    #         text = pdf_image_ocr.extract_text_from_scanned_pdf(temp_path)
+    #     elif extension in ['.jpg', '.jpeg', '.png', '.webp']:
+    #         text = pdf_image_ocr.extract_text_from_image(temp_path)
+    #     else:
+    #         return jsonify({"error": "Format non supporté"}), 400
+        
+    #     if not text:
+    #         return jsonify({"error": "OCR n'a rien trouvé"}), 400
+    # except Exception as e:
+    #     traceback.print_exc()
+    #     return jsonify({"error": f"Erreur OCR: {e}"}), 500
+    
+    
+    # print(f"DEBUG OCR OUTPUT: '{text[:300]}'")
     try:
-        # Tente d'extraire le texte du PDF scanné
-        text = pdf2Image.extract_text_from_scanned_pdf(pdf_path)
-        if not text:
-            print("WARNING: Le texte extrait du PDF est vide.")
-            return jsonify({"error": "Aucun texte extractible du PDF"}), 400
+        text = ""
+        if extension == '.pdf':
+            # Essaie pdfplumber d'abord (rapide, texte natif)
+            import pdfplumber
+            with pdfplumber.open(temp_path) as pdf:
+                text = " ".join([p.extract_text() for p in pdf.pages if p.extract_text()])
+            
+            print(f"DEBUG OCR OUTPUT: '{text[:300]}'")
+            
+            # Si pdfplumber échoue, fallback vers PaddleOCR
+            if not text or len(text) < 20:
+                print("WARNING: pdfplumber vide, passage à PaddleOCR...")
+                text = pdf_image_ocr.extract_text_from_scanned_pdf(temp_path)
+                print(f"DEBUG OCR OUTPUT (PaddleOCR): '{text[:300]}'")
+                
+        elif extension in ['.jpg', '.jpeg', '.png', '.webp']:
+            text = pdf_image_ocr.extract_text_from_image(temp_path)
+            print(f"DEBUG OCR OUTPUT: '{text[:300]}'")
+        else:
+            return jsonify({"error": "Format non supporté"}), 400
 
+        if not text:
+            return jsonify({"error": "OCR n'a rien trouvé"}), 400
     except Exception as e:
-        print(f"CRITICAL ERROR: Échec de l'extraction de texte à partir du PDF scanné : {e}")
         traceback.print_exc()
-        return jsonify({"error": "Échec de l'extraction de texte du PDF"}), 500
+        return jsonify({"error": f"Erreur OCR: {e}"}), 500
+
+    # print("\nINFO: Requête /extract reçue.")
+
+    # #1: recevoir un pdf
+    # #print(request.files)
+    # if 'file' not in request.files:
+    #     print("ERROR: Aucun fichier fourni dans la requête.")
+    #     return jsonify({"error": "Aucun fichier fourni"}), 400
+
+    # file = request.files['file']
+    # prpt_from_client_str=request.form.get("prpt","")
+
+
+    # #2: save un pdf
+    # temp_path = "temp_facture.dat"
+    # file.save(temp_path)
+
+    # #3.extract text mn pdf
+    # #text = extract_text_from_pdf(temp_path)
+
+    # try:
+    #     # Tente d'extraire le texte du PDF scanné
+    #     text = pdf_image_ocr.extract_text_from_scanned_pdf(temp_path)
+    #     if not text:
+    #         print("WARNING: Le texte extrait du PDF est vide.")
+    #         return jsonify({"error": "Aucun texte extractible du PDF"}), 400
+
+    # except Exception as e:
+    #     print(f"CRITICAL ERROR: Échec de l'extraction de texte à partir du PDF scanné : {e}")
+    #     traceback.print_exc()
+    #     return jsonify({"error": "Échec de l'extraction de texte du PDF"}), 500
 
     # ce que j ai modifie
     # Try a chunk size that leaves room for the prompt overhead:
@@ -456,69 +557,70 @@ def extract():
     all_extracted_data_from_chunks = []
     #traitement de chaque chunk par le modele LLama
     def make_prompt(chunk):
-        return f"""
-    Extract the following fields from the invoice text below. If a field is not present, set it to null.
+        return f"{SYSTEM_PROMPT}\n\nOCR Text Chunk:\n---\n{chunk}\n---"
+    
+    SYSTEM_PROMPT = """
+You are the TABIBI AI, a specialized dental medical record extractor.
+Your goal is to transform OCR text from a dental treatment fiche into a structured JSON object.
 
-    Text:
-    ---
-    {chunk}
-    ---
+STRICT RULES:
+1. Extract the Patient Name, Date, and a list of Treatments.
+2. For each treatment, identify: 
+   - 'act': The medical procedure (e.g., Extraction, Scaling/Détartrage, Filling/Composite).
+   - 'tooth': The tooth number (ISO 11-48). Use null if not applicable.
+   - 'price': The cost as a number.
+3. Language: If the input is in French, provide the 'act' in French.
+4. Output MUST be ONLY valid JSON. No conversational text.
 
-    Return only a valid JSON object with these fields:
-    vendor_name, invoice_date, total_amount, invoice_number, total_tax_percentage, devise, debit_note, amount, total, items
-
-    Example:
-    {{
-      "vendor_name": "ACME Corp",
-      "invoice_date": "2024-01-01",
-      "total_amount": 1000.0,
-      "invoice_number": "INV-12345",
-      "total_tax_percentage": 20.0,
-      "devise": "EUR",
-      "debit_note": null,
-      "amount": [],
-      "total": 1200.0,
-      "items": [
-        {{
-          "description": "Service A",
-          "quantity": 2,
-          "unit_price": 500.0,
-          "line_total": 1000.0
-        }}
-      ]
-    }}
-    Do not write any code, do not write any explanation, do not use markdown. Output only the JSON object.
-    """
-
+EXPECTED JSON STRUCTURE:
+{
+  "patient_name": "string",
+  "date": "string",
+  "treatments": [
+    {"act": "string", "tooth": integer or null, "price": float}
+  ],
+  "total": float
+}
+"""
 
 
     for i, chunk in enumerate(invoice_chunks):
+        # On utilise le prompt spécialisé TABIBI pour chaque morceau de texte
+        current_llm_prompt = f"{SYSTEM_PROMPT}\n\nOCR Text Chunk:\n---\n{chunk}\n---"
+        
+        extracted_info_from_chunk = extract_invoice_data(SYSTEM_PROMPT, chunk)
+        parsed_data = validate_invoice_data(extracted_info_from_chunk)
 
-        # ou bien ca : for chunk in invoice_chunks:
-        current_llm_prompt = make_prompt(chunk)
-        extracted_info_from_chunk = extract_invoice_data(current_llm_prompt , chunk)
-        print(f"DEBUG: Raw extracted info from chunk {i + 1}: {extracted_info_from_chunk}")
-        parsed_data=validate_invoice_data(extracted_info_from_chunk)
-
-        print(f"DEBUG: validate_invoice_data a retourné Type: {type(parsed_data)}, Contenu: {parsed_data}")  # C'est le dictionnaire retourné !
-
-        # C'est la ligne clé qui UTILISE ce dictionnaire
-        print(f"printed parsed data: {parsed_data}")
         if isinstance(parsed_data, dict) and "error" not in parsed_data:
             all_extracted_data_from_chunks.append(parsed_data)
-            print(f"DEBUG: Ajout de dictionnaire valide du chunk {i + 1} à la liste de consolidation.")
-        else:
 
-            # Check if parsed_data is None first
-            if parsed_data is None:
-                error_msg = 'Aucune donnée (parsed_data est None)'
-            elif isinstance(parsed_data, dict):
-                error_msg = parsed_data.get('error', 'Inconnu')
-            else:
-                # Fallback for other unexpected types if parsed_data is not dict or None
-                error_msg = f"Type de donnée inattendu: {type(parsed_data).__name__}"
+    # for i, chunk in enumerate(invoice_chunks):
 
-            print(f"WARNING: Aucune donnée structurée valide extraite du Chunk {i + 1} ou erreur de validation: {error_msg}")
+    #     # ou bien ca : for chunk in invoice_chunks:
+    #     current_llm_prompt = make_prompt(chunk)
+    #     extracted_info_from_chunk = extract_invoice_data(current_llm_prompt , chunk)
+    #     print(f"DEBUG: Raw extracted info from chunk {i + 1}: {extracted_info_from_chunk}")
+    #     parsed_data=validate_invoice_data(extracted_info_from_chunk)
+
+    #     print(f"DEBUG: validate_invoice_data a retourné Type: {type(parsed_data)}, Contenu: {parsed_data}")  # C'est le dictionnaire retourné !
+
+    #     # C'est la ligne clé qui UTILISE ce dictionnaire
+    #     print(f"printed parsed data: {parsed_data}")
+    #     if isinstance(parsed_data, dict) and "error" not in parsed_data:
+    #         all_extracted_data_from_chunks.append(parsed_data)
+    #         print(f"DEBUG: Ajout de dictionnaire valide du chunk {i + 1} à la liste de consolidation.")
+    #     else:
+
+    #         # Check if parsed_data is None first
+    #         if parsed_data is None:
+    #             error_msg = 'Aucune donnée (parsed_data est None)'
+    #         elif isinstance(parsed_data, dict):
+    #             error_msg = parsed_data.get('error', 'Inconnu')
+    #         else:
+    #             # Fallback for other unexpected types if parsed_data is not dict or None
+    #             error_msg = f"Type de donnée inattendu: {type(parsed_data).__name__}"
+
+    #         print(f"WARNING: Aucune donnée structurée valide extraite du Chunk {i + 1} ou erreur de validation: {error_msg}")
 
 
      # l mochkla tw chniaaa : enou   hthi  all_extracted_data_from_chunks liste fi wstha des dictionaires 5tr kol chunk yrj3 dictionaire   ama eni m7chtich kol chunk yrj3 dictionnaire 7chti fl5r b dictionnaire w7d w en plus  fama mochkla o5ra enou tl9a 7ajet yt3dou (d apres principe de chevauchement )
@@ -531,62 +633,111 @@ def extract():
             # exmple {'invoice_number': ['INV-123', 'INV-000123'], 'total_amount': ['100.00 EUR', '€100.00'], 'client_name': ['Acme Corp', 'Acme Corporation']}
 
             # rit hetha houa eli ylm resultat mt3 kol chunk
-    EXPECTED_SCHEMA = {
-        "vendor_name": None,
-        "invoice_date": None,
-        "total_amount": None,
-        "invoice_number": None,
-        "total_tax_percentage": None,
-        "devise": None,
-        "debit_note": None,
-        "amount": [],  # Default for a list
-        "total": None,  # Default for a number
-        "items": []  # Default for a list of items
+    final_result= {
+        
+        
+        
+        "patient_name": None,
+        "date": None,
+        "treatments": [],  # Liste des actes
+        "total": 0.0
+        # "vendor_name": None,
+        # "invoice_date": None,
+        # "total_amount": None,
+        # "invoice_number": None,
+        # "total_tax_percentage": None,
+        # "devise": None,
+        # "debit_note": None,
+        # "amount": [],  # Default for a list
+        # "total": None,  # Default for a number
+        # "items": []  # Default for a list of items
         # Add any other fields you expect to ALWAYS be in the final output
     }
-
-    consolidated_data = EXPECTED_SCHEMA.copy()
-        # htha l final  win bch n5liw lkol key valeur w7da  w htha b3d mywli json houwa eli yrj3
-
-
+    
+    potential_names = []
+    potential_dates = []
+    
+    # Set pour éviter les doublons de soins causés par le chevauchement des chunks
+    seen_treatment_keys = set()
 
     for data_dict in all_extracted_data_from_chunks:
-          print(f"DEBUG: Consolidation - Traitement de data_dict: {data_dict}, Type: {type(data_dict)}")
-          for key, value in data_dict.items():
-                if value  is not None and value != [] and value != {}:  # S'assurer que la valeur n'est pas vide
-                    if isinstance(value, (list, dict)):
-                        # Convert the list/dict to a JSON string representation
-                        # This makes it hashable for Counter
-                        value_to_store = json.dumps(value,sort_keys=True)
-                    else:
-                        value_to_store = value
+        if not isinstance(data_dict, dict): continue
+
+        # A. Collecte pour vote (Nom et Date)
+        if data_dict.get("patient_name"): potential_names.append(data_dict["patient_name"])
+        if data_dict.get("date"): potential_dates.append(data_dict["date"])
+
+        # B. Accumulation des soins (Treatments)
+        chunk_treatments = data_dict.get("treatments", [])
+        if isinstance(chunk_treatments, list):
+            for t in chunk_treatments:
+                if not t or not t.get("act"): continue
+                
+                # On crée une clé unique : "nom de l'acte-dent-prix"
+                # Cela permet de fusionner les morceaux de texte qui se chevauchent
+                unique_key = f"{t.get('act')}-{t.get('tooth')}-{t.get('price')}".lower().strip()
+                
+                if unique_key not in seen_treatment_keys:
+                    final_result["treatments"].append(t)
+                    seen_treatment_keys.add(unique_key)
+                    # Ajout au total
+                    try:
+                        price = float(str(t.get("price", 0)).replace(',', '.'))
+                        final_result["total"] += price
+                    except:
+                        pass
+
+    # 2. On applique le vote pour les champs uniques
+    if potential_names:
+        final_result["patient_name"] = Counter(potential_names).most_common(1)[0][0]
+    if potential_dates:
+        final_result["date"] = Counter(potential_dates).most_common(1)[0][0]
+
+    print(f"INFO: Consolidation TABIBI terminée pour {final_result['patient_name']}")
+    return jsonify(final_result)
+
+    # consolidated_data = EXPECTED_SCHEMA.copy()
+    #     # htha l final  win bch n5liw lkol key valeur w7da  w htha b3d mywli json houwa eli yrj3
 
 
-                    if key not in all_values_per_key:
-                        all_values_per_key[key] = []
-                    all_values_per_key[key].append(value_to_store)
 
-    for key, values in all_values_per_key.items():
-          if values:
-                # Utilise Counter pour trouver la valeur la plus commune
-                most_common_value = Counter(values).most_common(1)[0][0]
-
-                try:
-                    # Si c'est un JSON string, on le reconvertit
-                    if key in [ "items"]:
-                        consolidated_data[key] = json.loads(most_common_value)
-                    else:
-                        consolidated_data[key] = most_common_value
-                except  (json.JSONDecodeError, TypeError):
-                    consolidated_data[key] = most_common_value
-          elif key in EXPECTED_SCHEMA and EXPECTED_SCHEMA[key] is not None:
-                # Si aucune valeur valide n'a été trouvée pour une clé, assurez-vous qu'elle est à son défaut (null ou [])
-                consolidated_data[key] = EXPECTED_SCHEMA[key]
+    # for data_dict in all_extracted_data_from_chunks:
+    #       print(f"DEBUG: Consolidation - Traitement de data_dict: {data_dict}, Type: {type(data_dict)}")
+    #       for key, value in data_dict.items():
+    #             if value  is not None and value != [] and value != {}:  # S'assurer que la valeur n'est pas vide
+    #                 if isinstance(value, (list, dict)):
+    #                     # Convert the list/dict to a JSON string representation
+    #                     # This makes it hashable for Counter
+    #                     value_to_store = json.dumps(value,sort_keys=True)
+    #                 else:
+    #                     value_to_store = value
 
 
-    print(f"INFO: Données consolidées avec succès : {consolidated_data}")
+    #                 if key not in all_values_per_key:
+    #                     all_values_per_key[key] = []
+    #                 all_values_per_key[key].append(value_to_store)
 
-    return jsonify(consolidated_data)
+    # for key, values in all_values_per_key.items():
+    #       if values:
+    #             # Utilise Counter pour trouver la valeur la plus commune
+    #             most_common_value = Counter(values).most_common(1)[0][0]
+
+    #             try:
+    #                 # Si c'est un JSON string, on le reconvertit
+    #                 if key in [ "items"]:
+    #                     consolidated_data[key] = json.loads(most_common_value)
+    #                 else:
+    #                     consolidated_data[key] = most_common_value
+    #             except  (json.JSONDecodeError, TypeError):
+    #                 consolidated_data[key] = most_common_value
+    #       elif key in EXPECTED_SCHEMA and EXPECTED_SCHEMA[key] is not None:
+    #             # Si aucune valeur valide n'a été trouvée pour une clé, assurez-vous qu'elle est à son défaut (null ou [])
+    #             consolidated_data[key] = EXPECTED_SCHEMA[key]
+
+
+    # print(f"INFO: Données consolidées avec succès : {consolidated_data}")
+
+    # return jsonify(consolidated_data)
 
 
 
@@ -666,20 +817,34 @@ def download_model():
     os.makedirs("models", exist_ok=True)
     return None
 if __name__ == '__main__':
-    print("🚀 Serveur en cours d'exécution avec Waitress sur le port 8080...")
-    serve(app, host="0.0.0.0", port=8080)
-
+    os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
+    
     # w hetha zeda l kol juste bch njm nb3thou 
-    model_path = download_model()
+    manual_path = "models/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf"
 
-    if model_path:
-        print(f"Modèle chargé: {model_path}")
-        # Votre code de traitement ici...
+    # if model_path:
+    #     print(f"Modèle chargé: {model_path}")
+    #     # Votre code de traitement ici...
+    # else:
+    #     # Vérifier si le fichier a été placé manuellement
+    #     manual_path = "models/llama-3-8b-Instruct.Q4_K_M.gguf"
+    #     if os.path.exists(manual_path):
+    #         print("Modèle manuel détecté. Lancement du traitement...")
+    #         # Votre code de traitement ici...
+    #     else:
+    #         print("Modèle non disponible. Le programme s'arrête.")
+    
+    # print("🚀 Serveur en cours d'exécution avec Waitress sur le port 5000...")
+    # serve(app, host="0.0.0.0", port=5000)
+    
+    if os.path.exists(manual_path):
+        print(f" Modèle local trouvé dans : {manual_path}")
+        print(" Chargement du modèle en cours...")
+        load_llama_model(manual_path)
+        
+        print(" Serveur TABIBI opérationnel !")
+        print(" En attente de requêtes sur http://0.0.0.0:5000")
+        serve(app, host="0.0.0.0", port=5000)
     else:
-        # Vérifier si le fichier a été placé manuellement
-        manual_path = "models/llama-3-8b-Instruct.Q4_K_M.gguf"
-        if os.path.exists(manual_path):
-            print("Modèle manuel détecté. Lancement du traitement...")
-            # Votre code de traitement ici...
-        else:
-            print("Modèle non disponible. Le programme s'arrête.")
+        print(f" ERREUR CRITIQUE : Le fichier est introuvable ici : {os.path.abspath(manual_path)}")
+        print("Vérifie que le fichier .gguf est bien placé dans le dossier 'models'.")
